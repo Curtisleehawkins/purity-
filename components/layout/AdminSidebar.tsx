@@ -1,9 +1,10 @@
-// components/layout/AdminSidebar.tsx
 "use client";
-import { LayoutDashboard, FolderTree, Package, Users, Settings, ChevronLeft, ChevronRight, LogOut, TestTube2Icon } from "lucide-react";
+
+import { LayoutDashboard, FolderTree, Package, Users, Settings, ChevronLeft, ChevronRight, LogOut } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { supabase } from "@/lib/supabase/client";
 
 const navItems = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
@@ -11,39 +12,35 @@ const navItems = [
   { title: "Products", url: "/products", icon: Package },
   { title: "Users", url: "/users", icon: Users },
   { title: "Settings", url: "/settings", icon: Settings },
-   { title: "testing", url: "/test", icon: TestTube2Icon },
 ];
 
 interface AdminSidebarProps {
   collapsed: boolean;
   onToggle: () => void;
-  onClose: () => void; // 👈 new prop to close drawer on mobile nav click
+  onClose: () => void;
 }
 
 const AdminSidebar = ({ collapsed, onToggle, onClose }: AdminSidebarProps) => {
   const pathname = usePathname();
   const router = useRouter();
 
-  const handleLogout = () => {
-    localStorage.removeItem("isAuthenticated");
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
     router.push("/");
   };
 
   return (
     <aside className={cn(
       "flex flex-col border-r border-border bg-card transition-all duration-300 h-screen",
-      // 👇 On mobile always full width (w-60), collapse only applies on lg+
       collapsed ? "lg:w-16 w-60" : "w-60"
     )}>
       <div className="flex items-center justify-between p-4 border-b border-border">
-        {/* 👇 Always show logo on mobile regardless of collapsed state */}
         <span className={cn(
           "text-lg font-bold text-primary",
-          collapsed ? "lg:hidden" : ""   // hide on lg when collapsed, always show on mobile
+          collapsed ? "lg:hidden" : ""
         )}>
           AdminPro
         </span>
-        {/* 👇 Toggle button only visible on lg+ (mobile uses overlay close instead) */}
         <button
           onClick={onToggle}
           className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hidden lg:block"
@@ -57,7 +54,7 @@ const AdminSidebar = ({ collapsed, onToggle, onClose }: AdminSidebarProps) => {
           <Link
             key={item.url}
             href={item.url}
-            onClick={onClose} // 👈 close drawer when navigating on mobile
+            onClick={onClose}
             className={cn(
               "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
               pathname === item.url
@@ -66,7 +63,6 @@ const AdminSidebar = ({ collapsed, onToggle, onClose }: AdminSidebarProps) => {
             )}
           >
             <item.icon className="h-5 w-5 shrink-0" />
-            {/* 👇 Always show labels on mobile, hide when collapsed on lg+ */}
             <span className={cn(collapsed ? "lg:hidden" : "")}>{item.title}</span>
           </Link>
         ))}
