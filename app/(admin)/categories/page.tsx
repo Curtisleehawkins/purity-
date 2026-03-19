@@ -1,15 +1,16 @@
+/* eslint-disable @next/next/no-img-element */
 "use client";
 
 import { useEffect, useState } from "react";
-import { Plus, X } from "lucide-react";
+import { Plus, X, Upload, Image as ImageIcon } from "lucide-react";
 import { supabase } from "@/lib/supabase/client";
 import DataTable, { Column } from "@/components/layout/DataTable";
+import ImageCompressor from "@/components/layout/ImageCompressor";
 
 type Category = {
   id: string;
   name: string;
   slug: string;
-  icon: string;
   description: string;
   image: string;
 };
@@ -17,9 +18,8 @@ type Category = {
 const emptyCategory: Omit<Category, "id"> = {
   name: "",
   slug: "",
-  icon: "",
   description: "",
-  image: "/placeholder.svg",
+  image: "",
 };
 
 const columns: Column<Category>[] = [
@@ -27,11 +27,22 @@ const columns: Column<Category>[] = [
     key: "name",
     header: "Name",
     cell: (c) => (
-      <div>
-        <span className="font-medium text-foreground">
-          {c.icon} {c.name}
-        </span>
-        <p className="text-xs text-muted-foreground mt-0.5 sm:hidden">{c.slug}</p>
+      <div className="flex items-center gap-2">
+        {c.image ? (
+          <img
+            src={c.image}
+            alt={c.name}
+            className="w-8 h-8 rounded-lg object-cover shrink-0"
+          />
+        ) : (
+          <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center shrink-0">
+            <ImageIcon className="w-4 h-4 text-muted-foreground" />
+          </div>
+        )}
+        <div>
+          <span className="font-medium text-foreground block">{c.name}</span>
+          <p className="text-xs text-muted-foreground mt-0.5 sm:hidden">{c.slug}</p>
+        </div>
       </div>
     ),
   },
@@ -57,9 +68,13 @@ const CategoriesPage = () => {
   const [editing, setEditing] = useState<Category | null>(null);
   const [form, setForm] = useState(emptyCategory);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch categories on mount
+  // ✅ Only these two states needed now (no fileInputRef)
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string>("");
+
   useEffect(() => {
     const fetchCategories = async () => {
       const { data, error } = await supabase
@@ -81,45 +96,102 @@ const CategoriesPage = () => {
   const openAdd = () => {
     setEditing(null);
     setForm(emptyCategory);
+    setImageFile(null);
+    setImagePreview("");
+    setError(null);
     setModalOpen(true);
   };
 
   const openEdit = (category: Category) => {
     setEditing(category);
     setForm(category);
+    setImageFile(null);
+    setImagePreview(category.image ?? "");
+    setError(null);
     setModalOpen(true);
+  };
+
+  // ✅ Called by ImageCompressor after compression is done
+  const handleCompressed = (file: File) => {
+    setImageFile(file);
+    setImagePreview(URL.createObjectURL(file));
+    setError(null);
+  };
+
+  const clearImage = () => {
+    setImageFile(null);
+    setImagePreview("");
+    setForm((prev) => ({ ...prev, image: "" }));
+  };
+
+  // ✅ Unchanged — exactly as before
+  const uploadImage = async (file: File): Promise<string> => {
+    const ext = file.name.split(".").pop();
+    const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+
+    const { error } = await supabase.storage
+      .from("category-images")
+      .upload(fileName, file, { upsert: false });
+
+    if (error) throw new Error(error.message);
+
+    const { data } = supabase.storage
+      .from("category-images")
+      .getPublicUrl(fileName);
+
+    return data.publicUrl;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setSaving(true);
 
-    if (editing) {
-      // Update existing category
-      const { error } = await supabase
-        .from("categories")
-        .update(form)
-        .eq("id", editing.id);
+    try {
+      let imageUrl = form.image;
 
-      if (error) { setError(error.message); return; }
+      if (imageFile) {
+        imageUrl = await uploadImage(imageFile);
+      }
 
-      setCategories((prev) =>
-        prev.map((c) => (c.id === editing.id ? { ...form, id: editing.id } : c))
-      );
-    } else {
-      // Insert new category
-      const { data, error } = await supabase
-        .from("categories")
-        .insert(form)
-        .select()
-        .single();
+      const payload = {
+        name: form.name,
+        slug: form.slug,
+        description: form.description,
+        image: imageUrl,
+      };
 
-      if (error) { setError(error.message); return; }
+      if (editing) {
+        const { error } = await supabase
+          .from("categories")
+          .update(payload)
+          .eq("id", editing.id);
 
-      setCategories((prev) => [...prev, data]);
+        if (error) throw new Error(error.message);
+
+        setCategories((prev) =>
+          prev.map((c) =>
+            c.id === editing.id ? { ...payload, id: editing.id } : c
+          )
+        );
+      } else {
+        const { data, error } = await supabase
+          .from("categories")
+          .insert(payload)
+          .select()
+          .single();
+
+        if (error) throw new Error(error.message);
+
+        setCategories((prev) => [...prev, data]);
+      }
+
+      setModalOpen(false);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
+    } finally {
+      setSaving(false);
     }
-
-    setModalOpen(false);
   };
 
   const handleDelete = async (category: Category) => {
@@ -184,7 +256,57 @@ const CategoriesPage = () => {
             </h2>
 
             <form onSubmit={handleSubmit} className="space-y-3">
-              {(["name", "slug", "icon", "description"] as const).map((field) => (
+
+              {/* ✅ Image Upload — now uses ImageCompressor */}
+              <div>
+                <label className="text-sm font-medium text-foreground block mb-1">
+                  Category Image{" "}
+                  <span className="text-muted-foreground font-normal">
+                    (auto-compressed to ~200KB)
+                  </span>
+                </label>
+
+                <ImageCompressor onCompress={handleCompressed} maxSizeKB={200}>
+                  {(trigger) =>
+                    imagePreview ? (
+                      <div className="relative w-full h-36 mb-2 rounded-lg overflow-hidden border border-input">
+                        <img
+                          src={imagePreview}
+                          alt="Preview"
+                          className="w-full h-full object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={clearImage}
+                          className="absolute top-2 right-2 bg-black/50 text-white rounded-full p-1 hover:bg-black/70"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={trigger}
+                          className="absolute bottom-2 right-2 bg-black/50 text-white text-xs px-2 py-1 rounded-lg hover:bg-black/70"
+                        >
+                          Change
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={trigger}
+                        className="w-full h-36 border-2 border-dashed border-input rounded-lg flex flex-col items-center justify-center gap-2 text-muted-foreground hover:border-primary hover:text-primary transition-colors"
+                      >
+                        <Upload className="w-6 h-6" />
+                        <span className="text-sm">Click to upload image</span>
+                        <span className="text-xs">PNG, JPG, WEBP · Auto-compressed</span>
+                      </button>
+                    )
+                  }
+                </ImageCompressor>
+              </div>
+
+              {/* Text fields — unchanged */}
+              {(["name", "slug", "description"] as const).map((field) => (
                 <div key={field}>
                   <label className="text-sm font-medium text-foreground block mb-1 capitalize">
                     {field}
@@ -198,11 +320,14 @@ const CategoriesPage = () => {
                 </div>
               ))}
 
+              {error && <p className="text-red-500 text-sm">{error}</p>}
+
               <button
                 type="submit"
-                className="w-full bg-primary hover:bg-primary-dark text-primary-foreground font-medium py-2.5 rounded-lg text-sm transition-colors mt-1"
+                disabled={saving}
+                className="w-full bg-primary hover:bg-primary-dark text-primary-foreground font-medium py-2.5 rounded-lg text-sm transition-colors mt-1 disabled:opacity-60"
               >
-                {editing ? "Update" : "Add"} Category
+                {saving ? "Saving..." : editing ? "Update Category" : "Add Category"}
               </button>
             </form>
           </div>
