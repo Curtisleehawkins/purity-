@@ -1,10 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Plus, X } from "lucide-react";
-import { Category } from "@/lib/types";
-import { categories as initialCategories } from "@/lib/mockData";
+import { supabase } from "@/lib/supabase/client";
 import DataTable, { Column } from "@/components/layout/DataTable";
+
+type Category = {
+  id: string;
+  name: string;
+  slug: string;
+  icon: string;
+  description: string;
+  image: string;
+};
 
 const emptyCategory: Omit<Category, "id"> = {
   name: "",
@@ -23,7 +31,6 @@ const columns: Column<Category>[] = [
         <span className="font-medium text-foreground">
           {c.icon} {c.name}
         </span>
-        {/* Slug shown inline under name on mobile only */}
         <p className="text-xs text-muted-foreground mt-0.5 sm:hidden">{c.slug}</p>
       </div>
     ),
@@ -45,10 +52,31 @@ const columns: Column<Category>[] = [
 ];
 
 const CategoriesPage = () => {
-  const [categories, setCategories] = useState<Category[]>(initialCategories);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Category | null>(null);
   const [form, setForm] = useState(emptyCategory);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Fetch categories on mount
+  useEffect(() => {
+    const fetchCategories = async () => {
+      const { data, error } = await supabase
+        .from("categories")
+        .select("*")
+        .order("name", { ascending: true });
+
+      if (error) {
+        setError(error.message);
+      } else {
+        setCategories(data ?? []);
+      }
+      setLoading(false);
+    };
+
+    fetchCategories();
+  }, []);
 
   const openAdd = () => {
     setEditing(null);
@@ -62,22 +90,46 @@ const CategoriesPage = () => {
     setModalOpen(true);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
+
     if (editing) {
+      // Update existing category
+      const { error } = await supabase
+        .from("categories")
+        .update(form)
+        .eq("id", editing.id);
+
+      if (error) { setError(error.message); return; }
+
       setCategories((prev) =>
         prev.map((c) => (c.id === editing.id ? { ...form, id: editing.id } : c))
       );
     } else {
-      setCategories((prev) => [
-        ...prev,
-        { ...form, id: Date.now().toString() },
-      ]);
+      // Insert new category
+      const { data, error } = await supabase
+        .from("categories")
+        .insert(form)
+        .select()
+        .single();
+
+      if (error) { setError(error.message); return; }
+
+      setCategories((prev) => [...prev, data]);
     }
+
     setModalOpen(false);
   };
 
-  const handleDelete = (category: Category) => {
+  const handleDelete = async (category: Category) => {
+    const { error } = await supabase
+      .from("categories")
+      .delete()
+      .eq("id", category.id);
+
+    if (error) { setError(error.message); return; }
+
     setCategories((prev) => prev.filter((c) => c.id !== category.id));
   };
 
@@ -87,10 +139,8 @@ const CategoriesPage = () => {
 
   return (
     <div>
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 sm:mb-6">
         <h1 className="text-xl sm:text-2xl font-bold text-foreground">Categories</h1>
-
         <button
           onClick={openAdd}
           className="bg-primary hover:bg-primary-dark text-primary-foreground text-sm font-medium px-3 sm:px-4 py-2 rounded-lg flex items-center gap-1.5 transition-colors shrink-0 self-start sm:self-auto"
@@ -100,19 +150,23 @@ const CategoriesPage = () => {
         </button>
       </div>
 
-      {/* Universal DataTable */}
-      <DataTable<Category>
-        data={categories}
-        columns={columns}
-        keyExtractor={(c) => c.id}
-        onEdit={openEdit}
-        onDelete={handleDelete}
-        searchPlaceholder="Search categories..."
-        searchKeys={["name", "slug", "description"]}
-        pageSize={5}
-      />
+      {error && <p className="text-red-500 text-sm mb-4">Error: {error}</p>}
 
-      {/* Modal — full screen on mobile, centered card on sm+ */}
+      {loading ? (
+        <p className="text-sm text-muted-foreground">Loading...</p>
+      ) : (
+        <DataTable<Category>
+          data={categories}
+          columns={columns}
+          keyExtractor={(c) => c.id}
+          onEdit={openEdit}
+          onDelete={handleDelete}
+          searchPlaceholder="Search categories..."
+          searchKeys={["name", "slug", "description"]}
+          pageSize={5}
+        />
+      )}
+
       {modalOpen && (
         <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
           <div className="bg-card w-full sm:max-w-md rounded-t-2xl sm:rounded-xl p-5 sm:p-6 relative max-h-[90vh] overflow-y-auto">
@@ -123,7 +177,6 @@ const CategoriesPage = () => {
               <X className="h-4 w-4" />
             </button>
 
-            {/* Drag handle hint on mobile */}
             <div className="w-10 h-1 bg-muted rounded-full mx-auto mb-4 sm:hidden" />
 
             <h2 className="text-lg font-semibold mb-4">
